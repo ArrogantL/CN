@@ -3,10 +3,19 @@ from queue import Queue
 
 from GBN import *
 
+# 接受窗口
 recvN = 2
+# 发送窗口
 sendN = 3
+# 序号空间
 seqSpace = recvN + sendN
 
+# 多线程参数
+# cache：发送方，未ACK的分组的缓存
+# timerlist：计时器列表，对应每一个发送窗口位置
+# pend：发送方窗口满而等待发送的分组
+# recvCache：接收方缓存
+# recvOrder：接受方接受记录，成功接受的窗口位置
 searg = {"seqSpace": seqSpace, "recvN": recvN, "sendN": sendN,
          "base": 0, "nextseqnum": 0,
          "cache": [DATAGRAM()] * seqSpace,
@@ -18,10 +27,13 @@ searg = {"seqSpace": seqSpace, "recvN": recvN, "sendN": sendN,
 
 
 def sr(host, port, thost, tport):
+    # sr主程序。facade设计模式的命令行。
     s = initSocket(host, port)
     s.connect((thost, tport))
+    # 命令缓存
     q = Queue()
-    threading.Thread(target=serverThread, args=[s, q]).start()
+    # 实质上的主进程
+    threading.Thread(target=procceedThread, args=[s, q]).start()
     while True:
         # 读取控制台信息connect  send close  3个命令
         s = input("Enter command:\n").split(' ', 1)
@@ -36,7 +48,8 @@ def sr(host, port, thost, tport):
         q.put((s[0], s[1] + '8'))
 
 
-def serverThread(s, q):
+def procceedThread(s, q):
+    # 实质上的主进程，即使发送方，也能当接收方。实现双向传输
     threading.Thread(target=recvThread, args=[s]).start()
     threading.Thread(target=sendThread, args=[s]).start()
     while True:
@@ -54,6 +67,7 @@ def serverThread(s, q):
 
 
 def sendThread(s):
+    # 作为发送方式发送数据
     time=0
     while True:
         if searg["nextseqnum"] >= searg['base'] or searg["nextseqnum"] < (searg["base"] + searg["sendN"]) % searg[
@@ -73,6 +87,7 @@ def sendThread(s):
 
             s.send(dgram.toBytes())
         sleep(1)
+        # 计时器每隔2次发送，就唤醒一次。重发所有没有ack的分组
         time+=1
         if time==2:
             for i in range(searg["sendN"]):
@@ -87,6 +102,7 @@ def sendThread(s):
             time=0
 
 def recvThread(s):
+    # 作为接收方时接收数据发送ACK，同时作为发送方接受ACK
     pcount=0
     while True:
         recpkt = s.recv(10000)
@@ -95,10 +111,10 @@ def recvThread(s):
         if recpkt[0] == 'ACK':
             ack=int(recpkt[1])
             searg["timerlist"][ack]=0
+            # 更新base、timerlist
             for i in range(searg["sendN"]):
                 j=(searg["base"]+i)%searg['seqSpace']
                 timer = searg["timerlist"]
-                print(j,timer)
                 if  searg["timerlist"][j]!=0:
                     searg["base"]=j
                     break
@@ -115,6 +131,7 @@ def recvThread(s):
             searg["recvCache"][rcvseqnum]=rcvdata
             searg["recvOrder"][rcvseqnum]=True
             da = ("ACK\n" + str(rcvseqnum) + "\n\n").encode("UTF-8")
+            #recvbase、 recvOrder更新
             for i in range(searg["recvN"]):
                 j=(searg["recvBase"]+i)%searg['seqSpace']
                 if not searg["recvOrder"][j]:
@@ -122,8 +139,8 @@ def recvThread(s):
                     pcount+=1
                     break
                 searg["recvOrder"][j]=False
-            print("ACK:" + str(rcvseqnum), "data：", recpkt[3],"recvbaseTo",searg["recvBase"],
-                  searg["recvOrder"])
+            print("ACK:" + str(rcvseqnum), "data：", recpkt[3],"recvbaseTo",searg["recvBase"])
+            # 模拟分组丢失，模5丢失ack
             if pcount==5:
                 print("forbidACK:" + str(rcvseqnum), "data：", recpkt[3])
                 pcount=0
